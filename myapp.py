@@ -1,60 +1,111 @@
-import streamlit as st import yfinance as yf import plotly.graph_objs as go import pandas as pd from io import StringIO import requests
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import os
+from datetime import datetime
+from PIL import Image
+import plotly.graph_objs as go
 
-Page setup
+# --- Streamlit Page Setup ---
+st.set_page_config(page_title="Divesh Market Zone", layout="wide")
+st.title("📈 Divesh Market Zone")
+st.markdown("Live BTC/Gold Analysis + Support/Resistance + SL/TP + Elliott Wave + Trade Save")
 
-st.set_page_config(page_title="Divesh Market Zone", layout="wide") st.title("📈 Divesh Market Zone") st.markdown("Live BTC/Gold Chart + Signal + Support/Resistance + Elliott Wave + SL/TP + Export")
+# --- User Input ---
+symbol = st.selectbox("Choose Symbol", ["BTC-USD", "XAUUSD=X"])
+interval = st.selectbox("Interval", ["1h"])
+period = st.selectbox("Period", ["1d"])
 
-Select symbol
+# --- Download Data ---
+df = yf.download(tickers=symbol, interval=interval, period=period, progress=False)
+if df.empty:
+    st.error("❌ Data could not be loaded.")
+    st.stop()
 
-symbol = st.selectbox("📌 Select Asset", ["BTC-USD", "XAUUSD=X"], index=0)
+df.reset_index(inplace=True)
 
-Fetch data
+# --- Live Price ---
+latest_price = float(df['Close'].iloc[-1])
+st.markdown(f"💰 **Live Price ({symbol}):** ${latest_price:.2f}")
 
-df = yf.download(symbol, period="5d", interval="1h") df.dropna(inplace=True)
+# --- Support & Resistance ---
+support = float(df['Low'].min())
+resistance = float(df['High'].max())
+st.markdown(f"📉 **Support:** {support:.2f} | 📈 **Resistance:** {resistance:.2f}")
 
-Support/Resistance
+# --- Trend Detection ---
+def detect_trend(data):
+    data['MA20'] = data['Close'].rolling(window=20).mean()
+    if len(data) < 20 or pd.isna(data['MA20'].iloc[-1]):
+        return "No trend"
+    last_close = data['Close'].iloc[-1]
+    last_ma = data['MA20'].iloc[-1]
+    if last_close > last_ma:
+        return "Uptrend"
+    elif last_close < last_ma:
+        return "Downtrend"
+    else:
+        return "Sideways"
 
-df["EMA50"] = df['Close'].ewm(span=50, adjust=False).mean() support = round(df['Low'].min(), 2) resistance = round(df['High'].max(), 2)
+trend = detect_trend(df)
+st.markdown(f"📊 **Trend:** {trend}")
 
-Latest data
+# --- Plot Candlestick Chart ---
+fig = go.Figure(data=[go.Candlestick(
+    x=df['Datetime'] if 'Datetime' in df.columns else df['Date'],
+    open=df['Open'],
+    high=df['High'],
+    low=df['Low'],
+    close=df['Close']
+)])
+fig.update_layout(title=f"{symbol} Candlestick Chart", xaxis_title="Time", yaxis_title="Price", height=500)
+st.plotly_chart(fig, use_container_width=True)
 
-open_price = df['Open'].iloc[-1] close_price = df['Close'].iloc[-1] candle_type = "Bullish" if close_price > open_price else "Bearish" trend = "Uptrend" if close_price > df["EMA50"].iloc[-1] else "Downtrend"
+# --- Upload Chart Image ---
+st.header("📤 Upload Chart Image")
+uploaded_image = st.file_uploader("Upload chart image (PNG/JPG)", type=["png", "jpg", "jpeg"])
+if uploaded_image:
+    image = Image.open(uploaded_image)
+    st.image(image, caption="Uploaded Chart", use_container_width=True)
 
-Signal logic
+# --- Trade Input Section ---
+st.header("📝 Trade Entry")
+trade_reason = st.text_area("Enter reason for trade", "")
+sl = st.text_input("Stop Loss (SL)")
+tp = st.text_input("Take Profit (TP)")
 
-signal = "NO TRADE ZONE" if close_price > resistance: signal = "📈 BUY" elif close_price < support: signal = "📉 SELL"
+# --- Save Trade Button ---
+if st.button("💾 Save Trade"):
+    if trade_reason.strip() == "":
+        st.warning("⚠️ Please enter trade reason.")
+    else:
+        time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        filename = "saved_trades.csv"
+        new_entry = {
+            "Time": time_now,
+            "Symbol": symbol,
+            "Live Price": latest_price,
+            "Support": support,
+            "Resistance": resistance,
+            "Trend": trend,
+            "SL": sl,
+            "TP": tp,
+            "Reason": trade_reason
+        }
 
-SL & TP
+        # Append to CSV
+        if os.path.exists(filename):
+            df_existing = pd.read_csv(filename)
+            df_new = pd.DataFrame([new_entry])
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+            df_combined.to_csv(filename, index=False)
+        else:
+            pd.DataFrame([new_entry]).to_csv(filename, index=False)
 
-if signal == "📈 BUY": sl = round(support, 2) tp = round(close_price + (close_price - support), 2) elif signal == "📉 SELL": sl = round(resistance, 2) tp = round(close_price - (resistance - close_price), 2) else: sl = tp = None
+        st.success("✅ Trade saved successfully!")
 
-Display results
-
-st.markdown(f"🟥 Resistance: {resistance}") st.markdown(f"🟩 Support: {support}") st.markdown(f"🕯️ Candle Type: {candle_type}") st.markdown(f"📊 Trend: {trend}") st.markdown(f"🚦 Signal: {signal}") if sl and tp: st.markdown(f"🛡️ Stop Loss: {sl}") st.markdown(f"🎯 Take Profit: {tp}")
-
-Elliott Wave Input
-
-wave1_high = st.number_input("📏 Wave 1 High Price", value=0.0) if wave1_high and close_price > wave1_high: st.success("🚀 Wave 3 Buy Signal Triggered!")
-
-Plot candlestick chart
-
-fig = go.Figure(data=[go.Candlestick( x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], increasing_line_color='green', decreasing_line_color='red' )]) fig.add_hline(y=support, line_dash="dot", line_color="green", annotation_text="Support", annotation_position="bottom right") fig.add_hline(y=resistance, line_dash="dot", line_color="red", annotation_text="Resistance", annotation_position="top right") fig.update_layout(xaxis_rangeslider_visible=False, height=500, margin=dict(l=10, r=10, t=30, b=10), template="plotly_dark") st.plotly_chart(fig, use_container_width=True)
-
-Description box
-
-description = st.text_area("📝 Write Your Analysis/Notes")
-
-Chart upload
-
-uploaded_image = st.file_uploader("📤 Upload Chart Image (Optional)", type=["png", "jpg", "jpeg"]) if uploaded_image: st.image(uploaded_image, caption="Uploaded Chart", use_column_width=True)
-
-Telegram Send (Optional, requires setup)
-
-def send_telegram(msg): token = "YOUR_BOT_TOKEN" chat_id = "YOUR_CHAT_ID" url = f"https://api.telegram.org/bot{token}/sendMessage" data = {"chat_id": chat_id, "text": msg} requests.post(url, data=data)
-
-if st.button("📲 Send Signal to Telegram"): msg = f"Asset: {symbol}\nSignal: {signal}\nSupport: {support}\nResistance: {resistance}" send_telegram(msg) st.success("✅ Signal sent to Telegram!")
-
-CSV Export
-
-data = { "Asset": [symbol], "Support": [support], "Resistance": [resistance], "Trend": [trend], "Signal": [signal], "SL": [sl], "TP": [tp] } df_report = pd.DataFrame(data) st.download_button("📥 Download Report", df_report.to_csv(index=False), "report.csv", "text/csv")
-
+# --- Show Trade History ---
+if os.path.exists("saved_trades.csv"):
+    st.subheader("📁 Saved Trade History")
+    saved_df = pd.read_csv("saved_trades.csv")
+    st.dataframe(saved_df)
